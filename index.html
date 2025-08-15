@@ -85,6 +85,14 @@
             const base = generateProgression({ key:'C', bars:8 }).chords;
             const chordProgression = Array.from({length: NUM_REPS}, () => base).flat();
 
+            const guitar = makeGuitarStrumSeq(chordProgression, QPM, {
+                program: 25,                 // 25=Steel (0-index), prova 24 för Nylon
+                strings: 6,                  // 5 "strängar" ur voicingen
+                strokePattern: ['D','D','D','U'], // enkel pop-strum (1 & 3)
+                spreadMsDown: 50, spreadMsUp: 150, // down lite bredare än up
+                humanVel: 24, anchor: 64
+            });
+
             // 1) Melodi över ackord (ImprovRNN) – sänk temp för mer musikalitet
             const qSeed = { quantizationInfo:{stepsPerQuarter:SPQ},
                 notes:[{pitch:60, quantizedStartStep:0, quantizedEndStep:1, velocity:100}],
@@ -111,7 +119,7 @@
             const hats = makeHihat(Math.max(mel.totalTime, bass.totalTime), QPM);
 
             // 4) Mergea stämmor → spela
-            const full = mergeSequences(mel, pad, bass, hats);
+            const full = mergeSequences(mel, guitar, arp, bass, hats);
             await player.loadSamples(full);
             await player.start(full);
     }   

@@ -132,3 +132,56 @@ function mergeSequences(...seqs){
   }
   return out;
 }
+
+
+// --- Gitarr-strum över ackorden ---
+// strokePattern: array av 'D' (down) eller 'U' (up) per kvartslag i en takt.
+// ex: ['D','-','U','-'] = strum på 1 och 3, vila på 2 och 4.
+function makeGuitarStrumSeq(chords, qpm, {
+  program = 24,          // 24=GM25 Nylon, 25=Steel, 26=Jazz, 27=Clean
+  strings = 4,           // hur många toner ur voicingen (3–6)
+  strokePattern = ['D','-','U','-'], // per beat i 4/4
+  spreadMsDown = 22,     // hur brett (ms) ett downstroke sprids över strängar
+  spreadMsUp   = 18,     // hur brett (ms) ett upstroke sprids
+  humanVel = 10,         // ±velocity-variation
+  anchor = 64            // voicing runt E4
+} = {}) {
+  const ns = { notes:[], totalTime:0 };
+  const beat = 60 / qpm;
+  let t = 0;
+  let prev = null;
+
+  for (const ch of chords) {
+    // 1 takt per ackord → ta en voicing nära föregående
+    const fullVoicing = voiceLead(ch, prev, anchor, 6) // max 6 toner
+      .slice(-Math.max(3, Math.min(strings, 6)));      // ta topp-”strängar” (3–6)
+    prev = fullVoicing;
+
+    // bygg eventuella strokes över 4 slag (kvartar)
+    for (let b = 0; b < 4; b++) {
+      const st = strokePattern[b];
+      if (st === '-' || !fullVoicing.length) { t += beat; continue; }
+
+      const isDown = st === 'D';
+      const order = isDown ? fullVoicing.slice().sort((a,b)=>a-b)  // lågt → högt
+                           : fullVoicing.slice().sort((a,b)=>b-a); // högt → lågt
+      const spread = (isDown ? spreadMsDown : spreadMsUp) / 1000; // till sek
+      const perString = order.length > 1 ? spread / (order.length - 1) : 0;
+
+      // gör själva strummet: lägg små tidsförskjutningar för varje "sträng"
+      order.forEach((p, i) => {
+        const startJitter = (Math.random()-0.5) * 0.008; // ±8 ms
+        const v = 62 + Math.floor((Math.random()-0.5) * 2 * humanVel);
+        const start = t + i * perString + startJitter;
+        const end   = t + beat * 0.95 + startJitter;     // håll nästan hela slaget
+        ns.notes.push({ pitch: p, startTime: start, endTime: end,
+                        velocity: Math.max(40, Math.min(100, v)),
+                        program, isDrum: false });
+      });
+
+      t += beat;
+    }
+  }
+  ns.totalTime = t;
+  return ns;
+}
