@@ -81,14 +81,17 @@
       }; // :contentReference[oaicite:4]{index=4}
 
       async function playImprovOverRandomChords() {
-            const SPQ = 4, QPM = 90, STEPS_PER_CHORD = 12, NUM_REPS = 3;
+            const SPQ = 4, baseQPM = 90, STEPS_PER_CHORD = 12, NUM_REPS = 3;            
+            const drift = 1 + (Math.random() - 0.5); // ±50%
+            const qpm = baseQPM * drift;
+
             const base = generateProgression({ key:'C', bars:8 }).chords;
             const chordProgression = Array.from({length: NUM_REPS}, () => base).flat();
 
             const guitar = makeGuitarStrumSeq(chordProgression, QPM, {
-                program: 25,                 // 25=Steel (0-index), prova 24 för Nylon
-                strings: 6,                  // 5 "strängar" ur voicingen
-                strokePattern: ['D','D','D','U'], // enkel pop-strum (1 & 3)
+                program: [24,25,26,27][Math.floor(Math.random() * 4)],
+                strokePattern: Array.from({length:4}, () => ['D','U','-'][Math.floor(Math.random()*3)]),
+                strings: 3 + Math.floor(Math.random() * 4),
                 spreadMsDown: 50, spreadMsUp: 150, // down lite bredare än up
                 humanVel: 24, anchor: 64
             });
@@ -112,7 +115,16 @@
 
             // 2) Piano-komp: välj EN av dessa:
             const pad = makePianoPadsVL(chordProgression, QPM, 4, 4 /*EP1*/);            
-            const arp = makePianoArp(chordProgression, QPM, [0,1,2,3], 0);        // arpeggio (1-3-5-8)
+            const arp = makePianoArpVar(chordProgression, QPM, {
+                program: 0,          // or try 4 (EP), 48 (strings) for a softer bed
+                notesPerBar: 8,
+                octaveSpan: 1,       // allow reaching one octave above voicing
+                stepProb: 0.65,      // more stepwise than leapy
+                leapMax: 2,
+                swingProp: 0.6,      // gentle swing
+                jitterMs: 8,
+                velBase: 62, velHuman: 12
+                });
 
             // 3) Bas + hi-hat du redan har
             const bass = makeBassSeq(chordProgression, QPM);

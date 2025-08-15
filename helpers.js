@@ -73,26 +73,118 @@ function makePianoPadsVL(chords, qpm, holdBeats = 4, program = 4 /* EP1 */) {
   return ns;
 }
 
-// ---------- Arpeggio-komp (valfritt) ----------
-function makePianoArp(chords, qpm, pattern = [0,1,2,3], program = 0 /* Grand */){
-  const ns = { notes:[], totalTime:0 };
-  const eighth = 60/qpm/2;
-  let t = 0, prev = null;
-  for (const ch of chords){
-    const v = voiceLead(ch, prev, 64, 3); // triad
-    prev = v;
-    if (!v.length){ t += 8*eighth; continue; }
-    const ext = [...v, v[0]+12]; // lägg oktaven för "1-3-5-8"
-    for (let k=0;k<8;k++){
-      const idx = pattern[k % pattern.length];
-      const p = ext[Math.min(idx, ext.length-1)];
-      const vel = 58 + Math.floor(Math.random()*12);
-      const jit = (Math.random()-0.5)*0.01;
-      ns.notes.push({ pitch:p, startTime:t+jit, endTime:t+0.9*eighth,
-        velocity:vel, program, isDrum:false });
-      t += eighth;
+// --- Randomized arpeggio with contours, octave drift & humanize ---
+// Requires: Tonal loaded, and your existing voiceLead(name, prev, anchor, size)
+function makePianoArpVar(chords, qpm, {
+  program = 0,              // Acoustic Grand; change if you prefer EP
+  notesPerBar = 8,          // 8th-notes in 4/4
+  octaveSpan = 1,           // how many octaves above top voice we may reach (0..2)
+  stepProb = 0.7,           // chance to move to adjacent chord tone vs leap
+  leapMax = 2,              // max leap (in chord-tone index steps) when leaping
+  swingProp = 0.58,         // 0.5=r straight, 0.58–0.64 = swing feel
+  jitterMs = 8,             // ± start jitter in ms
+  velBase = 62, velHuman = 12
+} = {}) {
+  const eighth = 60 / qpm / 2;
+  const ns = { notes:[], totalTime: 0 };
+  let t = 0, prevVoicing = null;
+
+  // helpers
+  const rand = (n) => Math.floor(Math.random()*n);
+  const pick = (arr) => arr[rand(arr.length)];
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // available bar contours
+  const CONTOURS = ['UP','DOWN','UPDOWN','ALBERTI','WALK'];
+
+  for (const ch of chords) {
+    // 1) get a smooth chord voicing near E4 (you already have voiceLead)
+    const base = voiceLead(ch, prevVoicing, 64, 4);     // triad/7th around E4
+    prevVoicing = base;
+    if (!base.length) { t += 4 * (60/qpm); continue; }
+
+    // 2) build chord-tone pool across octaves (so we can go higher/lower)
+    //    start at the lowest tone of current voicing
+    const low = base[0];
+    const pool = [];
+    for (let oct = -1; oct <= octaveSpan; oct++) {
+      for (const p of base) pool.push(p + 12*oct);
     }
+    pool.sort((a,b)=>a-b);
+
+    // 3) choose a contour for this bar
+    const contour = pick(CONTOURS);
+
+    // 4) generate the 8th-note line for the bar
+    //    find a start index near the middle of pool
+    let idx = clamp(Math.floor(pool.length/2) + rand(2) - 1, 0, pool.length-1);
+    const seq = [];
+
+    const albertiOrder = [0, 3, 1, 3]; // low, high, mid, high (repeat)  (low–high–mid–high) 
+    // (we’ll map these to base[0..] then to nearest from pool)
+    const albertiPitches = (() => {
+      const order = albertiOrder.map(i => base[clamp(i, 0, base.length-1)]);
+      // project each to nearest in pool
+      return order.map(p => pool.reduce((best, x) => Math.abs(x-p) < Math.abs(best-p) ? x : best, pool[0]));
+    })();
+
+    for (let k=0; k<notesPerBar; k++){
+      let pitch;
+      switch (contour) {
+        case 'UP':
+          idx = clamp(idx+1, 0, pool.length-1);
+          pitch = pool[idx];
+          break;
+        case 'DOWN':
+          idx = clamp(idx-1, 0, pool.length-1);
+          pitch = pool[idx];
+          break;
+        case 'UPDOWN': {
+          // go up for half bar, then down
+          const goingUp = k < notesPerBar/2;
+          idx = clamp(idx + (goingUp ? 1 : -1), 0, pool.length-1);
+          pitch = pool[idx];
+          break;
+        }
+        case 'ALBERTI': {
+          // map 0..7 to 0..3 repeating
+          const p = albertiPitches[k % albertiPitches.length];
+          // small octave drift every other bar-slot
+          const drift = (k % 4 === 2) ? 12 * (Math.random() < 0.3 ? 1 : 0) : 0;
+          pitch = p + drift;
+          break;
+        }
+        default: { // 'WALK' — random walk with step/leap
+          if (Math.random() < stepProb) {
+            idx += (Math.random() < 0.5 ? -1 : 1);
+          } else {
+            idx += (Math.random() < 0.5 ? -1 : 1) * (1 + rand(leapMax));
+          }
+          idx = clamp(idx, 0, pool.length-1);
+          pitch = pool[idx];
+          break;
+        }
+      }
+
+      // swing: delay every 2nd 8th a bit
+      const isEven8th = (k % 2) === 1;
+      const swing = isEven8th ? (eighth * swingProp - eighth * 0.5) : 0;
+      const jitter = (Math.random()-0.5) * (jitterMs/1000);
+
+      const vel = clamp(velBase + Math.floor((Math.random()-0.5)*2*velHuman) + (k===0?6:0), 40, 100);
+      ns.notes.push({
+        pitch,
+        startTime: t + k*eighth + swing + jitter,
+        endTime:   t + (k+1)*eighth + jitter*0.6,
+        velocity:  vel,
+        program,
+        isDrum: false
+      });
+    }
+
+    t += 4 * (60/qpm); // one bar advance
   }
+
   ns.totalTime = t;
   return ns;
 }
